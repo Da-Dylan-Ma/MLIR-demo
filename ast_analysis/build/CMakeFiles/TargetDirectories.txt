@@ -1,0 +1,14 @@
+/home/mad29/projects/mlir/demo/ast_analysis/build/CMakeFiles/intrinsics_gen.dir
+/home/mad29/projects/mlir/demo/ast_analysis/build/CMakeFiles/vt_gen.dir
+/home/mad29/projects/mlir/demo/ast_analysis/build/CMakeFiles/omp_gen.dir
+/home/mad29/projects/mlir/demo/ast_analysis/build/CMakeFiles/acc_gen.dir
+/home/mad29/projects/mlir/demo/ast_analysis/build/CMakeFiles/ARMTargetParserTableGen.dir
+/home/mad29/projects/mlir/demo/ast_analysis/build/CMakeFiles/AArch64TargetParserTableGen.dir
+/home/mad29/projects/mlir/demo/ast_analysis/build/CMakeFiles/RISCVTargetParserTableGen.dir
+/home/mad29/projects/mlir/demo/ast_analysis/build/CMakeFiles/mlir-tablegen-targets.dir
+/home/mad29/projects/mlir/demo/ast_analysis/build/CMakeFiles/mlir-headers.dir
+/home/mad29/projects/mlir/demo/ast_analysis/build/CMakeFiles/mlir-generic-headers.dir
+/home/mad29/projects/mlir/demo/ast_analysis/build/CMakeFiles/mlir-doc.dir
+/home/mad29/projects/mlir/demo/ast_analysis/build/CMakeFiles/ast_analysis_demo.dir
+/home/mad29/projects/mlir/demo/ast_analysis/build/CMakeFiles/edit_cache.dir
+/home/mad29/projects/mlir/demo/ast_analysis/build/CMakeFiles/rebuild_cache.dir

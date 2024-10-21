@@ -1,0 +1,13 @@
+Suggested customized pipeline:
+mlir-opt --pass-pipeline="builtin.module(func.func(affine-loop-tile{tile-size=32},cse,loop-invariant-code-motion,affine-loop-unroll))" badcode.mlir
+
+Explanation:
+"--pass-pipeline=":
+	Defines a custom sequence of passes to apply.
+"builtin.module(...)": 
+	Applies the listed passes to the entire module.
+"func.func(...)": 
+	Applies the listed passes to each function within the module.
+
+Builtin pipeline:
+mlir-opt --canonicalize --cse --inline --loop-invariant-code-motion badcode.mlir

@@ -1,0 +1,15 @@
+1. Loop Fusion
+	- Check the original code: mlir-opt loop_fusion.mlir
+	- Check the optimized code: mlir-opt --affine-loop-fusion loop_fusion.mlir
+
+2. Loop Tiling
+	- Check the original code: mlir-opt loop_tiling.mlir
+	- Check teh optimized code: mlir-opt --affine-loop-tile="tile-size=32" loop_tiling.mlir
+
+2. Loop Unrolling
+        - Check the original code: mlir-opt loop_unrolling.mlir
+        - Check teh optimized code: mlir-opt --affine-loop-unroll loop_unrolling.mlir
+
+4. Loop Invariant Code Motion
+        - Check the original code: mlir-opt loop_invariant.mlir
+        - Check teh optimized code: mlir-opt --affine-loop-invariant-code-motion loop_invariant.mlir
