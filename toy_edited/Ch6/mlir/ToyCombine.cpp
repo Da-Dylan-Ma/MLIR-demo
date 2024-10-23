@@ -61,25 +61,62 @@ void TransposeOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 /* Added by Da - Start */
 
-struct OptimizeChainMatmul:public mlir::OpRewritePattern<MatmulOp>{
+// Helper function to check if reordering the matrices results in better performance.
+// The function compares the dimensions of matrices to decide whether Ax(BC) is better than (AB)xC.
+bool is_better_reordered(mlir::RankedTensorType a_type, mlir::RankedTensorType b_type, mlir::RankedTensorType c_type) {
+  // Extract the dimensions of matrices A, B, and C.
+  int64_t a_rows = a_type.getShape()[0];
+  int64_t a_cols = a_type.getShape()[1];
+  int64_t b_cols = b_type.getShape()[1];
+  int64_t c_cols = c_type.getShape()[1];
 
+  // Cost of (AB)xC: a_rows * a_cols * c_cols + a_rows * b_cols * c_cols
+  int64_t cost_ab_c = a_rows * a_cols * c_cols + a_rows * b_cols * c_cols;
+
+  // Cost of A(BC): a_rows * b_cols * c_cols + a_cols * b_cols * c_cols
+  int64_t cost_a_bc = a_rows * b_cols * c_cols + a_cols * b_cols * c_cols;
+
+  // Return true if reordering is beneficial, i.e., A(BC) is cheaper than (AB)C.
+  return cost_a_bc < cost_ab_c;
+}
+
+struct OptimizeChainMatmul : public mlir::OpRewritePattern<MatmulOp> {
   OptimizeChainMatmul(mlir::MLIRContext *context)
     : OpRewritePattern<MatmulOp>(context, 2) {}
 
   llvm::LogicalResult
-  matchAndRewrite(MatmulOp op,
-		  mlir::PatternRewriter &rewriter)const override{
+  matchAndRewrite(MatmulOp op, mlir::PatternRewriter &rewriter) const override {
     mlir::Value matmul_lhs = op.getOperands()[0];
     mlir::Value matmul_rhs = op.getOperands()[1];
     MatmulOp matmul_lhs_op = matmul_lhs.getDefiningOp<MatmulOp>();
 
-    if(!matmul_lhs_op)
+    if (!matmul_lhs_op) return failure();
+
+    auto lhs_a_type = matmul_lhs_op.getOperands()[0].getType();
+    auto lhs_b_type = matmul_lhs_op.getOperands()[1].getType();
+    auto rhs_c_type = matmul_rhs.getType();
+
+    if (!lhs_a_type.isa<mlir::RankedTensorType>() ||
+        !lhs_b_type.isa<mlir::RankedTensorType>() ||
+        !rhs_c_type.isa<mlir::RankedTensorType>()) {
       return failure();
+    }
 
-    auto BxC = rewriter.create<MatmulOp>(op.getLoc(), matmul_lhs_op.getOperands()[1], matmul_rhs);
-    auto AxBC = rewriter.create<MatmulOp>(op.getLoc(), matmul_lhs_op.getOperands()[0], BxC);
+    auto lhs_a = lhs_a_type.cast<mlir::RankedTensorType>();
+    auto lhs_b = lhs_b_type.cast<mlir::RankedTensorType>();
+    auto rhs_c = rhs_c_type.cast<mlir::RankedTensorType>();
 
-    rewriter.replaceOp(op, AxBC.getResult());
+    // Check if reordering improves performance using the helper function.
+    if (!is_better_reordered(lhs_a, lhs_b, rhs_c)) {
+      return failure();
+    }
+
+    // If reordering is beneficial, proceed with the optimization.
+    auto bx_c = rewriter.create<MatmulOp>(op.getLoc(), matmul_lhs_op.getOperands()[1], matmul_rhs);
+    auto ax_bc = rewriter.create<MatmulOp>(op.getLoc(), matmul_lhs_op.getOperands()[0], bx_c);
+
+    // Replace the original op with the optimized Ax(BC) chain.
+    rewriter.replaceOp(op, ax_bc.getResult());
     return success();
   }
 };

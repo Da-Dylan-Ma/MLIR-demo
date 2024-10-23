@@ -317,102 +317,83 @@ struct TransposeOpLowering : public ConversionPattern {
 
 /* Added by Da - Start */
 
-// Function to lower a Matmul operation into loops.
-static void lower_op_to_loops_matmul(Operation *op, ValueRange operands, PatternRewriter &rewriter, LoopIterationFn process_iteration) {
-  // Get the result type of the operation using mlir::cast
-  auto tensor_type = mlir::cast<RankedTensorType>(*op->result_type_begin());
+// Function to lower our newly defined Matmul operation into affine loops.
+static void lower_matmul_to_loops(Operation *op, ValueRange operands, PatternRewriter &rewriter, LoopIterationFn process_iteration) {
+  auto result_tensor_type = mlir::cast<RankedTensorType>(*op->result_type_begin());
+  auto memref_type = convertTensorToMemRef(result_tensor_type);
   auto loc = op->getLoc();
-
-  // Convert the tensor type to a MemRef type for storage allocation
-  auto memref_type = convertTensorToMemRef(tensor_type);
-
-  // Allocate memory for the result tensor (alloca + dealloc)
+  // Allocate memory for the result tensor
   auto alloc = insertAllocAndDealloc(memref_type, loc, rewriter);
 
-  // Prepare the loop bounds and step size for the outer loop
-  SmallVector<int64_t, 4> lower_bounds(tensor_type.getRank(), 0);
-  SmallVector<int64_t, 4> steps(tensor_type.getRank(), 1);
+  // Get the shape of the result tensor.
+  ArrayRef<int64_t> result_shape = result_tensor_type.getShape();
 
-  // Get the inner dimension size (common dimension in matrix multiplication)
-  SmallVector<int64_t, 1> dim_v;
-  auto dim = mlir::cast<RankedTensorType>(op->getOperand(0).getType()).getShape()[1];
-  dim_v.push_back(dim);
+  // Get the inner dimension size (common dimension in matrix multiplication).
+  int64_t common_dim_size = mlir::cast<RankedTensorType>(op->getOperand(0).getType()).getShape()[1];
 
-  // Build the outer two loops (for row and column iteration)
+  // Build outer loops for iterating over the rows and columns of the result matrix.
   mlir::affine::buildAffineLoopNest(
-    rewriter, loc, lower_bounds, tensor_type.getShape(), steps,
-    [&](OpBuilder &nested_builder, Location loc, ValueRange ivs) {
-      // Initialize the result tensor with zero
-      SmallVector<Value, 2> set_zero_ivs(ivs);
-      auto load_res = rewriter.create<mlir::affine::AffineLoadOp>(loc, alloc, set_zero_ivs);
-      Value value_to_store = rewriter.create<arith::SubFOp>(loc, load_res, load_res);
-      rewriter.create<mlir::affine::AffineStoreOp>(loc, value_to_store, alloc, set_zero_ivs);
+    rewriter, loc, /*lowerBounds=*/{0, 0}, /*upperBounds=*/{result_shape[0], result_shape[1]}, /*steps=*/{1, 1},
+    [&](OpBuilder &nested_builder, Location loc, ValueRange row_col_indices) {
+      // Initialize the result tensor with zero at the current row and column indices.
+      auto load_res = rewriter.create<mlir::affine::AffineLoadOp>(loc, alloc, row_col_indices);
+      Value zero_value = rewriter.create<arith::SubFOp>(loc, load_res, load_res);
+      rewriter.create<mlir::affine::AffineStoreOp>(loc, zero_value, alloc, row_col_indices);
 
-      // Prepare the inner loop for the matrix multiplication operation
-      SmallVector<int64_t, 4> inner_lower_bounds(1, 0);
-      SmallVector<int64_t, 4> inner_steps(1, 1);
-      ValueRange result_ivs = ivs;
-
-      SmallVector<Value, 3> for_ivs;
-      for_ivs.push_back(ivs[0]);
-      for_ivs.push_back(ivs[1]);
-
+      // Build inner loop for performing dot product along the common dimension.
       mlir::affine::buildAffineLoopNest(
-        rewriter, loc, inner_lower_bounds, dim_v, inner_steps,
-        [&](OpBuilder &nested_builder, Location loc, ValueRange inner_ivs) {
-          // Push the inner loop iterator for correct indexing in matrix multiplication
-          for_ivs.push_back(inner_ivs[0]);
+        rewriter, loc, /*lowerBounds=*/{0}, /*upperBounds=*/{common_dim_size}, /*steps=*/{1},
+        [&](OpBuilder &inner_builder, Location loc, ValueRange common_index) {
+          // Indices for lhs matrix (row, common) and rhs matrix (common, col).
+          Value row_idx = row_col_indices[0];
+          Value col_idx = row_col_indices[1];
+          Value common_idx = common_index[0];
 
-          // Call the function that performs the core matrix multiplication (element-wise multiplication)
-          Value value_to_add = process_iteration(nested_builder, operands, for_ivs);
+          // Load elements from lhs (A[row, common]) and rhs (B[common, col]) matrices.
+          auto lhs_value = inner_builder.create<mlir::affine::AffineLoadOp>(loc, operands[0], ValueRange{row_idx, common_idx});
+          auto rhs_value = inner_builder.create<mlir::affine::AffineLoadOp>(loc, operands[1], ValueRange{common_idx, col_idx});
 
-          // Load the current value from the result tensor
-          auto load_result = nested_builder.create<mlir::affine::AffineLoadOp>(loc, alloc, result_ivs);
+          // Multiply the values and add to the result.
+          Value product = inner_builder.create<arith::MulFOp>(loc, lhs_value, rhs_value);
+          auto load_result = inner_builder.create<mlir::affine::AffineLoadOp>(loc, alloc, row_col_indices);
+          Value updated_value = inner_builder.create<arith::AddFOp>(loc, load_result, product);
 
-          // Accumulate the result by adding the product
-          Value value_to_store = nested_builder.create<arith::AddFOp>(loc, load_result, value_to_add);
-
-          // Store the updated result
-          nested_builder.create<mlir::affine::AffineStoreOp>(loc, value_to_store, alloc, result_ivs);
+          // Store the updated result back in the result tensor.
+          inner_builder.create<mlir::affine::AffineStoreOp>(loc, updated_value, alloc, row_col_indices);
         }
       );
     }
   );
 
-  // Replace the original operation with the newly generated result
+  // Replace the original Matmul operation with the allocated result.
   rewriter.replaceOp(op, alloc);
 }
 
-// Pattern for lowering the Matmul operation
+// Pattern for lowering the Matmul operation.
 struct MatmulOpLowering : public ConversionPattern {
   MatmulOpLowering(MLIRContext *ctx)
     : ConversionPattern(toy::MatmulOp::getOperationName(), 1, ctx) {}
 
   LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands, ConversionPatternRewriter &rewriter) const final {
-    auto loc = op->getLoc();
-
-    // Lower the MatmulOp to loops
-    lower_op_to_loops_matmul(op, operands, rewriter,
-      [loc](OpBuilder &builder, ValueRange memref_operands, ValueRange loop_ivs) {
-        // MatmulOpAdaptor allows easy access to Matmul operands (lhs and rhs matrices)
+    // Lower the Matmul operation to loops.
+    lower_matmul_to_loops(op, operands, rewriter,
+      [op](OpBuilder &builder, ValueRange memref_operands, ValueRange loop_indices) {
+        // Use a lambda to process the element-wise multiplication.
         typename toy::MatmulOpAdaptor matmul_adaptor(memref_operands);
 
-        // Prepare the indexing for accessing elements from the lhs and rhs matrices
-        SmallVector<Value, 2> lhs_ivs, rhs_ivs;
-        lhs_ivs.push_back(loop_ivs[0]); // Row index for lhs matrix
-        lhs_ivs.push_back(loop_ivs[2]); // Common index for lhs matrix
-        rhs_ivs.push_back(loop_ivs[2]); // Common index for rhs matrix
-        rhs_ivs.push_back(loop_ivs[1]); // Column index for rhs matrix
+        // Get the indices for lhs (row, common) and rhs (common, col).
+        Value row_idx = loop_indices[0];
+        Value col_idx = loop_indices[1];
+        Value common_idx = loop_indices[2];
 
-        // Load elements from the lhs and rhs matrices
-        auto loaded_lhs = builder.create<mlir::affine::AffineLoadOp>(loc, matmul_adaptor.getOperands()[0], lhs_ivs);
-        auto loaded_rhs = builder.create<mlir::affine::AffineLoadOp>(loc, matmul_adaptor.getOperands()[1], rhs_ivs);
+        // Load the lhs (A[row, common]) and rhs (B[common, col]) elements.
+        auto lhs_value = builder.create<mlir::affine::AffineLoadOp>(op->getLoc(), matmul_adaptor.getOperands()[0], ValueRange{row_idx, common_idx});
+        auto rhs_value = builder.create<mlir::affine::AffineLoadOp>(op->getLoc(), matmul_adaptor.getOperands()[1], ValueRange{common_idx, col_idx});
 
-        // Multiply the loaded lhs and rhs elements
-        return builder.create<arith::MulFOp>(loc, loaded_lhs, loaded_rhs);
+        // Multiply the values and return the result.
+        return builder.create<arith::MulFOp>(op->getLoc(), lhs_value, rhs_value);
       }
     );
-
     return success();
   }
 };
