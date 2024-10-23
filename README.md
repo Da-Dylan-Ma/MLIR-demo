@@ -29,12 +29,11 @@ This demo processes `.mlir` files to provide a more structured and readable repr
 This section presents an end-to-end workflow using a custom `matmul` dialect, demonstrating optimizations and code generation.
 
 ### Setup Instructions:
-1. Replace the contents of the `llvm-project/mlir/examples/toy/Ch6/` directory with the modified `Ch6` directory provided.
-2. Ensure a complete build of the MLIR library has been completed. Then, navigate to `llvm-project/build/` and run:
+1. Replace the contents of the `llvm-project/mlir/examples/toy/Ch6/` directory with the modified `Ch6` directory provided under `toy_edited`.
+2. Ensure a complete build of the MLIR/LLVM library has been completed following MLIR's official guidelines when installing it. Then, apply the changes and navigate to `llvm-project/build/` and run:
    ```bash
    cmake --build .
    ```
-3. Make sure to rebuild the project following MLIR's official guidelines.
 
 ### Modified Files:
 Below is a list of modified files. Search for "Added by Da" in these files to quickly locate the changes:
